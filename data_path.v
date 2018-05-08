@@ -67,7 +67,7 @@ module data_path (
 	wire IF_ID_isJRL = signal[15:12] == 5;
 	wire [1:0] rs = IF_ID_ins[11:10];
 	wire [1:0] rt = (IF_ID_isJAL || IF_ID_isJRL) ? 2 : IF_ID_ins[9:8];
-	wire stall;
+	wire hazard_stall;
 	wire [1:0] rd;
 	wire isBR = signal[9];
 
@@ -175,7 +175,16 @@ module data_path (
 	/* Hazard detection unit section */
 	wire isJMP = signal[10];
 
-	hazard_detection_unit HAZ(ID_EX_signal, RegDst ? ID_EX_rd : ID_EX_rt, EX_MEM_sig, EX_MEM_rd, rs, rt, signal, stall);
+	hazard_detection_unit HAZ(ID_EX_signal, RegDst ? ID_EX_rd : ID_EX_rt, EX_MEM_sig, EX_MEM_rd, rs, rt, signal, hazard_stall);
+
+
+	//cache stall
+	wire IF_mem_stall;
+	reg IF_mem_stall_counter;
+	assign IF_mem_stall = IF_mem_stall_counter;
+	wire stall = hazard_stall || IF_mem_stall;
+	//cache stall
+
 
 	assign is_halted = (MEM_WB_sig[15:12] == 2);
 
@@ -201,6 +210,7 @@ module data_path (
 		IF_ID_ins <= `NOP;
 		ID_EX_ins <= `NOP;
 		ID_EX_signal <= `SIG_SIZE'b0;
+		IF_mem_stall_counter <= 1;
 	end
 
 
@@ -213,6 +223,7 @@ module data_path (
 			IF_ID_ins <= `NOP;
 			ID_EX_ins <= `NOP;
 			ID_EX_signal <= `SIG_SIZE'b0;
+			IF_mem_stall_counter <= 1;
 		end
 		else begin
 			if(flush && !stall) IF_ID_ins <= `NOP;
@@ -221,6 +232,10 @@ module data_path (
 				IF_ID_nextPC <= nextPC;
 				IF_ID_PC <= PC;
 			end
+			if(nextPC != PC) begin
+				IF_mem_stall_counter <= 1;
+			end
+			if(IF_mem_stall_counter) IF_mem_stall_counter <= 0;
 		end
 	end
 	//** IF STAGE END **//
@@ -261,6 +276,8 @@ module data_path (
 	end
 	// ** EX STAGE END **//
 
+	reg [`WORD_SIZE-1:0] WWD_reg;
+
 	// ** MEM STAGE **//
 	always @ (posedge clk) begin
 		MEM_WB_ins <= EX_MEM_ins;
@@ -270,12 +287,15 @@ module data_path (
 		MEM_WB_rd <= EX_MEM_rd;
 		MEM_WB_ALUout <= EX_MEM_ALUout;
 		MEM_WB_data <= data2;
+		WWD_reg <= MEM_WB_rs;
 	end
 
 	// ** WB STAGE **//
 	always @ (posedge clk) begin
-		if(MEM_WB_sig) num_inst_counter <= num_inst_counter + 1;
-		WWD_output = MEM_WB_rs;
+		if(MEM_WB_sig) begin 
+			num_inst_counter <= num_inst_counter + 1;
+			WWD_output <= MEM_WB_rs;
+		end
 	end
 	// ** WB STAGE END **//
 	
