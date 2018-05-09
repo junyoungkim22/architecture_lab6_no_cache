@@ -179,16 +179,10 @@ module data_path (
 
 
 	//cache stall
-	wire IF_mem_stall;
-	reg IF_mem_stall_counter;
-	assign IF_mem_stall = IF_mem_stall_counter;
-
-	wire MEM_mem_stall;
-	reg MEM_mem_stall_counter;
+	reg IF_mem_stall;
+	reg MEM_mem_stall;
 	wire MEM_access = ID_EX_signal[6] || ID_EX_signal[8];
-	assign MEM_mem_stall = MEM_mem_stall_counter;
 	wire stall = hazard_stall || IF_mem_stall || MEM_mem_stall;
-	//wire stall = hazard_stall || MEM_mem_stall;
 	//cache stall
 
 
@@ -216,8 +210,8 @@ module data_path (
 		IF_ID_ins <= `NOP;
 		ID_EX_ins <= `NOP;
 		ID_EX_signal <= `SIG_SIZE'b0;
-		IF_mem_stall_counter <= 1;
-		MEM_mem_stall_counter <= 0;
+		IF_mem_stall <= 1;
+		MEM_mem_stall <= 0;
 	end
 
 
@@ -230,8 +224,8 @@ module data_path (
 			IF_ID_ins <= `NOP;
 			ID_EX_ins <= `NOP;
 			ID_EX_signal <= `SIG_SIZE'b0;
-			IF_mem_stall_counter <= 1;
-			MEM_mem_stall_counter <= 0;
+			IF_mem_stall <= 1;
+			MEM_mem_stall <= 0;
 		end
 		else begin
 			if(!MEM_mem_stall) begin
@@ -242,10 +236,10 @@ module data_path (
 					IF_ID_PC <= PC;
 				end
 				if(nextPC != PC) begin
-					IF_mem_stall_counter <= 1;
+					IF_mem_stall <= 1;
 				end
-				if(IF_mem_stall_counter) begin
-					IF_mem_stall_counter <= 0;
+				if(IF_mem_stall) begin
+					IF_mem_stall <= 0;
 				end
 			end
 		end
@@ -290,11 +284,11 @@ module data_path (
 			EX_MEM_sig <= ID_EX_signal;
 		end
 		if((nextPC != PC) && MEM_access) begin
-			MEM_mem_stall_counter <= 1;
+			MEM_mem_stall <= 1;
 		end
 
-		if(MEM_mem_stall_counter) begin
-			MEM_mem_stall_counter <= 0;
+		if(MEM_mem_stall) begin
+			MEM_mem_stall <= 0;
 		end
 
 	end
@@ -313,10 +307,6 @@ module data_path (
 			MEM_WB_ALUout <= EX_MEM_ALUout;
 			MEM_WB_data <= data2;
 			WWD_reg <= MEM_WB_rs;
-		end
-		else begin
-			//MEM_WB_sig <= 0;
-			//MEM_WB_ins <= `NOP;
 		end
 	end
 
