@@ -182,7 +182,13 @@ module data_path (
 	wire IF_mem_stall;
 	reg IF_mem_stall_counter;
 	assign IF_mem_stall = IF_mem_stall_counter;
-	wire stall = hazard_stall || IF_mem_stall;
+
+	wire MEM_mem_stall;
+	reg MEM_mem_stall_counter;
+	wire MEM_access = ID_EX_signal[6] || ID_EX_signal[8];
+	assign MEM_mem_stall = MEM_mem_stall_counter;
+	wire stall = hazard_stall || IF_mem_stall || MEM_mem_stall;
+	//wire stall = hazard_stall || MEM_mem_stall;
 	//cache stall
 
 
@@ -200,7 +206,7 @@ module data_path (
 	wire [`WORD_SIZE-1:0] right_br_target = bcond ? br_target : IF_ID_PC + 1;
 	wire [`WORD_SIZE-1:0] predict_PC = isJMP ? btb_result : ((take && isBR) ? btb_result : PC + 1);
 
-	assign nextPC = stall ? PC : ((isBR) ? (!prediction_fail ? predict_PC : right_br_target) : (isJMP ? (!prediction_fail ? predict_PC : jmp_target) : predict_PC));
+	assign nextPC = stall || MEM_mem_stall ? PC : ((isBR) ? (!prediction_fail ? predict_PC : right_br_target) : (isJMP ? (!prediction_fail ? predict_PC : jmp_target) : predict_PC));
 	
 	/* Initialization */
 	initial begin
@@ -211,6 +217,7 @@ module data_path (
 		ID_EX_ins <= `NOP;
 		ID_EX_signal <= `SIG_SIZE'b0;
 		IF_mem_stall_counter <= 1;
+		MEM_mem_stall_counter <= 0;
 	end
 
 
@@ -224,18 +231,23 @@ module data_path (
 			ID_EX_ins <= `NOP;
 			ID_EX_signal <= `SIG_SIZE'b0;
 			IF_mem_stall_counter <= 1;
+			MEM_mem_stall_counter <= 0;
 		end
 		else begin
-			if(flush && !stall) IF_ID_ins <= `NOP;
-			if (!stall && !flush) begin 
-				IF_ID_ins <= data1;
-				IF_ID_nextPC <= nextPC;
-				IF_ID_PC <= PC;
+			if(!MEM_mem_stall) begin
+				if(flush && !stall) IF_ID_ins <= `NOP;
+				if (!stall && !flush) begin 
+					IF_ID_ins <= data1;
+					IF_ID_nextPC <= nextPC;
+					IF_ID_PC <= PC;
+				end
+				if(nextPC != PC) begin
+					IF_mem_stall_counter <= 1;
+				end
+				if(IF_mem_stall_counter) begin
+					IF_mem_stall_counter <= 0;
+				end
 			end
-			if(nextPC != PC) begin
-				IF_mem_stall_counter <= 1;
-			end
-			if(IF_mem_stall_counter) IF_mem_stall_counter <= 0;
 		end
 	end
 	//** IF STAGE END **//
@@ -245,20 +257,22 @@ module data_path (
 	// ** ID STAGE ** //
 	always @ (posedge clk) begin
 		if(reset_n) begin
-			if(!stall) begin
-				ID_EX_ins <= IF_ID_ins;
-				ID_EX_signal <= signal;
-				ID_EX_readData1 <= readData1;
-				ID_EX_readData2 <= readData2;
-				ID_EX_sign_extended <= sign_extended;
-				ID_EX_rs <= rs;
-				ID_EX_rt <= rt;
-				ID_EX_rd <= IF_ID_ins[7:6];
-				ID_EX_nextPC <= IF_ID_nextPC;
-			end
-			if(stall) begin
-				ID_EX_ins <= `NOP;
-				ID_EX_signal <= `SIG_SIZE'b0;
+			if(!MEM_mem_stall) begin
+				if(!stall) begin
+					ID_EX_ins <= IF_ID_ins;
+					ID_EX_signal <= signal;
+					ID_EX_readData1 <= readData1;
+					ID_EX_readData2 <= readData2;
+					ID_EX_sign_extended <= sign_extended;
+					ID_EX_rs <= rs;
+					ID_EX_rt <= rt;
+					ID_EX_rd <= IF_ID_ins[7:6];
+					ID_EX_nextPC <= IF_ID_nextPC;
+				end
+				if(stall) begin
+					ID_EX_ins <= `NOP;
+					ID_EX_signal <= `SIG_SIZE'b0;
+				end
 			end
 		end
 	end
@@ -267,12 +281,22 @@ module data_path (
 
 	// ** EX STAGE **//
 	always @ (posedge clk) begin
-		EX_MEM_rs <= forwardA;
-		EX_MEM_rt <= forwardB;
-		EX_MEM_rd <= RegDst ? ID_EX_rd : ID_EX_rt;
-		EX_MEM_ALUout <= (ID_EX_isJAL || ID_EX_isJRL)  ? ID_EX_nextPC : ALUOut;
-		EX_MEM_ins <= ID_EX_ins;
-		EX_MEM_sig <= ID_EX_signal;
+		if(!MEM_mem_stall) begin
+			EX_MEM_rs <= forwardA;
+			EX_MEM_rt <= forwardB;
+			EX_MEM_rd <= RegDst ? ID_EX_rd : ID_EX_rt;
+			EX_MEM_ALUout <= (ID_EX_isJAL || ID_EX_isJRL)  ? ID_EX_nextPC : ALUOut;
+			EX_MEM_ins <= ID_EX_ins;
+			EX_MEM_sig <= ID_EX_signal;
+		end
+		if((nextPC != PC) && MEM_access) begin
+			MEM_mem_stall_counter <= 1;
+		end
+
+		if(MEM_mem_stall_counter) begin
+			MEM_mem_stall_counter <= 0;
+		end
+
 	end
 	// ** EX STAGE END **//
 
@@ -280,19 +304,25 @@ module data_path (
 
 	// ** MEM STAGE **//
 	always @ (posedge clk) begin
-		MEM_WB_ins <= EX_MEM_ins;
-		MEM_WB_sig <= EX_MEM_sig;
-		MEM_WB_rs <= EX_MEM_rs;
-		MEM_WB_rt <= EX_MEM_rt;
-		MEM_WB_rd <= EX_MEM_rd;
-		MEM_WB_ALUout <= EX_MEM_ALUout;
-		MEM_WB_data <= data2;
-		WWD_reg <= MEM_WB_rs;
+		if(!MEM_mem_stall) begin
+			MEM_WB_ins <= EX_MEM_ins;
+			MEM_WB_sig <= EX_MEM_sig;
+			MEM_WB_rs <= EX_MEM_rs;
+			MEM_WB_rt <= EX_MEM_rt;
+			MEM_WB_rd <= EX_MEM_rd;
+			MEM_WB_ALUout <= EX_MEM_ALUout;
+			MEM_WB_data <= data2;
+			WWD_reg <= MEM_WB_rs;
+		end
+		else begin
+			//MEM_WB_sig <= 0;
+			//MEM_WB_ins <= `NOP;
+		end
 	end
 
 	// ** WB STAGE **//
 	always @ (posedge clk) begin
-		if(MEM_WB_sig) begin 
+		if(MEM_WB_sig && !MEM_mem_stall) begin 
 			num_inst_counter <= num_inst_counter + 1;
 			WWD_output <= MEM_WB_rs;
 		end
