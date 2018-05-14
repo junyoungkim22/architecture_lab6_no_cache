@@ -235,10 +235,10 @@ module data_path (
 					IF_ID_nextPC <= nextPC;
 					IF_ID_PC <= PC;
 				end
-				if(nextPC != PC) begin
+				if(nextPC != PC) begin     //when reading a new instruction, stall 1 cycle
 					IF_mem_stall <= 1;
 				end
-				if(IF_mem_stall) begin
+				if(IF_mem_stall) begin     //If previous cycle was stalled due to memory read, do not stall memory this cycle.
 					IF_mem_stall <= 0;
 				end
 			end
